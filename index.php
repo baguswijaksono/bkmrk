@@ -2,29 +2,25 @@
 
 declare(strict_types=1);
 
+session_start();
+
+$servername = "localhost";
+$username = "root";
+$password = "";
+$dbname = "bookmark_manager";
+$authPassword = 'your_secret_password'; // Set your password here
+
+$conn = new mysqli($servername, $username, $password, $dbname);
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
+}
+
 $routes = [
     'GET' => [],
     'POST' => [],
     'PUT' => [],
     'DELETE' => [],
 ];
-
-// Database connection
-function conn(): mysqli
-{
-    $servername = 'localhost';
-    $username = 'root';  // Change this to your MySQL username
-    $password = '';      // Change this to your MySQL password
-    $dbname = 'bookmark_manager';
-
-    $conn = new mysqli($servername, $username, $password, $dbname);
-
-    if ($conn->connect_error) {
-        die("Connection failed: " . $conn->connect_error);
-    }
-
-    return $conn;
-}
 
 // Add a route for a specific HTTP method
 function get(string $path, callable $handler): void
@@ -80,119 +76,170 @@ function handleNotFound(): void
     echo "404 Not Found";
 }
 
-// Register all routes and handle the current request
+// Register routes for the CRUD Bookmark Manager
+
+get('/', 'listBookmarks'); // List all bookmarks
+get('/login', 'showLogin'); // Show login page
+post('/login', 'processLogin'); // Process login form
+post('/logout', 'logout'); // Logout user
+post('/bookmark', 'authGuard', 'createBookmark'); // Create a new bookmark (requires auth)
+put('/bookmark/(\d+)', 'authGuard', 'updateBookmark'); // Update a bookmark (requires auth)
+delete('/bookmark/(\d+)', 'authGuard', 'deleteBookmark'); // Delete a bookmark (requires auth)
+
+// Middleware for checking if the user is authenticated
+function authGuard(callable $next, ...$args)
+{
+    if (!isAuthenticated()) {
+        header('Location: /login');
+        exit;
+    }
+
+    // If authenticated, continue to the requested action
+    call_user_func_array($next, $args);
+}
+
+function isAuthenticated(): bool
+{
+    return isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true;
+}
+
+// Authentication Handlers
+
+function showLogin(): void
+{
+    if (isAuthenticated()) {
+        header('Location: /');
+        exit;
+    }
+
+    echo "<h1>Login</h1>";
+    echo "<form action='/login' method='POST'>
+            <label>Password:</label><br>
+            <input type='password' name='password' required><br><br>
+            <button type='submit'>Login</button>
+          </form>";
+}
+
+function processLogin(): void
+{
+    global $authPassword;
+
+    if ($_POST['password'] === $authPassword) {
+        $_SESSION['logged_in'] = true;
+        header('Location: /');
+        exit;
+    }
+
+    echo "Incorrect password. <a href='/login'>Try again</a>";
+}
+
+function logout(): void
+{
+    session_destroy();
+    header('Location: /login');
+}
+
+// CRUD Handlers
+
+function listBookmarks(): void
+{
+    global $conn;
+
+    echo "<h1>Bookmarks</h1>";
+
+    if (isAuthenticated()) {
+        echo "<form action='/logout' method='POST'><button type='submit'>Logout</button></form>";
+    } else {
+        echo "<a href='/login'>Login</a>";
+    }
+
+    $sql = "SELECT * FROM bookmarks";
+    $result = $conn->query($sql);
+    echo "<ul>";
+    while ($row = $result->fetch_assoc()) {
+        echo "<li>" . htmlspecialchars($row['title']) . " - <a href='" . htmlspecialchars($row['url']) . "'>" . htmlspecialchars($row['url']) . "</a>";
+        
+        // Only show edit and delete options to authenticated users
+        if (isAuthenticated()) {
+            echo " | <a href='/bookmark/edit/" . $row['id'] . "'>Edit</a> | " . 
+                "<form action='/bookmark/" . $row['id'] . "' method='POST' style='display:inline;'>".
+                "<input type='hidden' name='_method' value='DELETE'>".
+                "<button type='submit'>Delete</button></form>";
+        }
+
+        echo "</li>";
+    }
+    echo "</ul>";
+
+    // Only show the add form to authenticated users
+    if (isAuthenticated()) {
+        echo "<h2>Add Bookmark</h2>";
+        echo "<form action='/bookmark' method='POST'>
+                <input type='text' name='title' placeholder='Title' required><br>
+                <input type='text' name='url' placeholder='URL' required><br>
+                <button type='submit'>Add Bookmark</button>
+              </form>";
+    }
+}
+
+function createBookmark(): void
+{
+    global $conn;
+    $title = $_POST['title'];
+    $url = $_POST['url'];
+
+    $sql = "INSERT INTO bookmarks (title, url) VALUES (?, ?)";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("ss", $title, $url);
+    $stmt->execute();
+    
+    header('Location: /');
+}
+
+function updateBookmark(int $id): void
+{
+    global $conn;
+    parse_str(file_get_contents("php://input"), $_PUT);
+
+    $title = $_PUT['title'] ?? null;
+    $url = $_PUT['url'] ?? null;
+
+    if ($title && $url) {
+        $sql = "UPDATE bookmarks SET title=?, url=? WHERE id=?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ssi", $title, $url, $id);
+        $stmt->execute();
+        echo "Bookmark updated successfully!";
+    } else {
+        echo "Invalid input data!";
+    }
+}
+
+function deleteBookmark(int $id): void
+{
+    global $conn;
+    $sql = "DELETE FROM bookmarks WHERE id=?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
+    echo "Bookmark deleted successfully!";
+}
+
+// Dispatch request
 function listen(): void
 {
     $url = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
     $method = $_SERVER['REQUEST_METHOD'];
 
-    // Define routes
-    get('/', 'home');
-    get('/bookmarks', 'listBookmarks');
-    post('/bookmarks', 'addBookmark');
-    put('/bookmarks/(\d+)', 'updateBookmark');
-    delete('/bookmarks/(\d+)', 'deleteBookmark');
+    // Handle method override for PUT and DELETE
+    if ($method === 'POST' && isset($_POST['_method'])) {
+        $method = strtoupper($_POST['_method']);
+    }
 
     // Dispatch the request
     dispatch($url, $method);
 }
 
-// Example handlers
-function home(): void
-{
-    echo "Welcome to the Bookmark Manager!";
-}
-
-// List all bookmarks
-function listBookmarks(): void
-{
-    $conn = conn();
-    $sql = "SELECT id, title, url FROM bookmarks";
-    $result = $conn->query($sql);
-
-    $bookmarks = [];
-    if ($result->num_rows > 0) {
-        while ($row = $result->fetch_assoc()) {
-            $bookmarks[] = $row;
-        }
-    }
-
-    header('Content-Type: application/json');
-    echo json_encode($bookmarks);
-    
-    $conn->close();
-}
-
-// Add a new bookmark
-function addBookmark(): void
-{
-    $input = json_decode(file_get_contents('php://input'), true);
-
-    if (!isset($input['title']) || !isset($input['url'])) {
-        http_response_code(400); // Bad Request
-        echo "Invalid input";
-        return;
-    }
-
-    $conn = conn();
-    $stmt = $conn->prepare("INSERT INTO bookmarks (title, url) VALUES (?, ?)");
-    $stmt->bind_param("ss", $input['title'], $input['url']);
-    
-    if ($stmt->execute()) {
-        http_response_code(201); // Created
-        echo "Bookmark added successfully";
-    } else {
-        http_response_code(500); // Server error
-        echo "Error adding bookmark";
-    }
-
-    $stmt->close();
-    $conn->close();
-}
-
-// Update an existing bookmark by ID
-function updateBookmark(int $id): void
-{
-    $input = json_decode(file_get_contents('php://input'), true);
-
-    if (!isset($input['title']) || !isset($input['url'])) {
-        http_response_code(400); // Bad Request
-        echo "Invalid input";
-        return;
-    }
-
-    $conn = conn();
-    $stmt = $conn->prepare("UPDATE bookmarks SET title = ?, url = ? WHERE id = ?");
-    $stmt->bind_param("ssi", $input['title'], $input['url'], $id);
-    
-    if ($stmt->execute()) {
-        echo "Bookmark updated successfully";
-    } else {
-        http_response_code(500); // Server error
-        echo "Error updating bookmark";
-    }
-
-    $stmt->close();
-    $conn->close();
-}
-
-// Delete a bookmark by ID
-function deleteBookmark(int $id): void
-{
-    $conn = conn();
-    $stmt = $conn->prepare("DELETE FROM bookmarks WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    
-    if ($stmt->execute()) {
-        echo "Bookmark deleted successfully";
-    } else {
-        http_response_code(500); // Server error
-        echo "Error deleting bookmark";
-    }
-
-    $stmt->close();
-    $conn->close();
-}
-
-// Start listening for incoming requests
 listen();
+
+$conn->close();
