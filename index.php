@@ -1,80 +1,18 @@
 <?php
-
 declare(strict_types=1);
-session_start();
+require_once 'kita.php';
+require_once 'db_conn.php';
 
-require_once 'db.php';
-
-const HTTP_OK = 200;
-const HTTP_NOT_FOUND = 404;
-const HTTP_METHOD_NOT_ALLOWED = 405;
-
-$routes = [
-    'GET' => [],
-    'POST' => [],
-    'PUT' => [],
-    'DELETE' => [],
-];
-
-function get(string $path, callable $handler): void
-{
-    global $routes;
-    $routes['GET'][$path] = $handler;
+function main(){
+    session_start();
+    get('/', 'listBookmarks'); 
+    get('/c', 'createBookmark'); 
+    post('/c', 'storeBookmark'); 
+    get('/e/(\d+)', 'editBookmark');
+    post('/u/(\d+)', 'updateBookmark');
+    post('/d/(\d+)', 'deleteBookmark');
+    post('/v', 'middleware');
 }
-
-function post(string $path, callable $handler): void
-{
-    global $routes;
-    $routes['POST'][$path] = $handler;
-}
-
-function put(string $path, callable $handler): void
-{
-    global $routes;
-    $routes['PUT'][$path] = $handler;
-}
-
-function delete(string $path, callable $handler): void
-{
-    global $routes;
-    $routes['DELETE'][$path] = $handler;
-}
-
-function dispatch(string $url, string $method): void
-{
-    global $routes;
-
-    if (!isset($routes[$method])) {
-        http_response_code(HTTP_METHOD_NOT_ALLOWED);
-        echo "Method $method Not Allowed";
-        return;
-    }
-
-    foreach ($routes[$method] as $path => $handler) {
-        if (preg_match("#^$path$#", $url, $matches)) {
-            array_shift($matches);
-            $matches = array_map('intval', $matches);
-            call_user_func_array($handler, $matches);
-            return;
-        }
-    }
-
-    http_response_code(HTTP_NOT_FOUND);
-    handleNotFound();
-}
-
-function handleNotFound(): void
-{
-    echo "404 Not Found";
-}
-
-get('/', 'listBookmarks'); 
-get('/c', 'createBookmark'); 
-post('/c', 'storeBookmark'); 
-get('/e/(\d+)', 'editBookmark');
-post('/u/(\d+)', 'updateBookmark');
-post('/d/(\d+)', 'deleteBookmark');
-post('/v', 'middleware');
 
 function listBookmarks(): void
 {
@@ -82,6 +20,9 @@ function listBookmarks(): void
     global $conn;
 
     echo "<h1>Bookmarks</h1>";
+
+    // Add a "Create" button linking to /c
+    echo "<a href='/c' style='display:inline-block; margin-bottom:10px; padding:10px 20px; background-color:#007BFF; color:white; text-decoration:none; border-radius:5px;'>Create Bookmark</a>";
 
     $sql = "SELECT * FROM bookmarks";
     $result = $conn->query($sql);
@@ -349,7 +290,7 @@ function deleteBookmark(int $id): void
 
 function middleware()
 {
-    $hashed_password = '$2y$10$A5XBobk5O4dzipZSEIDEkeZggwzM/YaaqAuDP9mLAWjqQ6DM0kVIu';
+    $hashed_password = '';
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_SESSION['original_password'])) {
         if (password_verify($_POST['password'], $hashed_password)) {
             $_SESSION['original_password'] = $_POST['password'];
@@ -368,5 +309,3 @@ function middleware()
         exit;
     }
 }
-
-dispatch($_SERVER['REQUEST_URI'], $_SERVER['REQUEST_METHOD']);
